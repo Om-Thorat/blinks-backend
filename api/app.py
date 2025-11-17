@@ -1,5 +1,5 @@
 import os
-import redis
+from upstash_redis import Redis
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -10,8 +10,7 @@ load_dotenv()
 app = Flask(__name__)
 
 CORS(app)
-redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-redis_client = redis.from_url(redis_url, decode_responses=True)
+redis = Redis.from_env()
 
 
 def is_valid_url(url):
@@ -21,10 +20,26 @@ def is_valid_url(url):
     except:
         return False
 
+@app.route('/', methods=['GET'])
+def root():
+    return jsonify({
+        'message': 'Blinks API is running!',
+        'version': '1.0.0',
+        'endpoints': {
+            'health': '/health',
+            'create_blink': 'POST /create-blink',
+            'get_redirect': 'GET /b/{blink_url}',
+            'list_blinks': 'GET /blinks',
+            'blink_info': 'GET /blink/{blink_url}/info',
+            'update_blink': 'PUT /blink/{blink_url}',
+            'delete_blink': 'DELETE /blink/{blink_url}'
+        }
+    }), 200
+
 @app.route('/health', methods=['GET'])
 def health_check():
     try:
-        redis_client.ping()
+        redis.ping()
         return jsonify({'status': 'healthy', 'redis': 'connected'}), 200
     except:
         return jsonify({'status': 'unhealthy', 'redis': 'disconnected'}), 500
@@ -39,11 +54,16 @@ def create_blink():
         
         redirect_url = data['redirect_url']
         blink_url = data['blink_url']
+
+        blink_url = blink_url.lower()
         
+        if not redirect_url.startswith(('http://', 'https://')):
+            redirect_url = 'http://' + redirect_url
+
         if not is_valid_url(redirect_url):
             return jsonify({'error': 'Invalid redirect_url format'}), 400
         
-        if redis_client.exists(f"blink:{blink_url}"):
+        if redis.exists(f"blink:{blink_url}"):
             return jsonify({'error': 'Blink URL already exists'}), 409
         
         blink_data = {
@@ -51,7 +71,7 @@ def create_blink():
             'created_at': str(int(os.times().system)),
         }
         
-        redis_client.hset(f"blink:{blink_url}", mapping=blink_data)
+        redis.hset(f"blink:{blink_url}", values=blink_data)
         
         return jsonify({
             'blink_url': blink_url,
@@ -66,11 +86,11 @@ def create_blink():
 @app.route('/b/<blink_id>', methods=['GET'])
 def redirect_blink(blink_id):
     try:
-        blink_data = redis_client.hgetall(f"blink:{blink_id}")
+        blink_data = redis.hgetall(f"blink:{blink_id}")
         
         if not blink_data:
             return jsonify({'error': 'Blink not found'}), 404
-                
+                        
         return jsonify({
             'redirect_url': blink_data['redirect_url']
         }), 200
@@ -81,7 +101,7 @@ def redirect_blink(blink_id):
 @app.route('/blink/<blink_id>/info', methods=['GET'])
 def get_blink_info(blink_id):
     try:
-        blink_data = redis_client.hgetall(f"blink:{blink_id}")
+        blink_data = redis.hgetall(f"blink:{blink_id}")
         
         if not blink_data:
             return jsonify({'error': 'Blink not found'}), 404
@@ -98,8 +118,8 @@ def get_blink_info(blink_id):
 @app.route('/blink/<blink_id>', methods=['DELETE'])
 def delete_blink(blink_id):
     try:
-        if redis_client.exists(f"blink:{blink_id}"):
-            redis_client.delete(f"blink:{blink_id}")
+        if redis.exists(f"blink:{blink_id}"):
+            redis.delete(f"blink:{blink_id}")
             return jsonify({'message': 'Blink deleted successfully'}), 200
         else:
             return jsonify({'error': 'Blink not found'}), 404
@@ -110,12 +130,12 @@ def delete_blink(blink_id):
 @app.route('/blinks', methods=['GET'])
 def list_blinks():
     try:
-        blink_keys = redis_client.keys("blink:*")
+        blink_keys = redis.keys("blink:*")
         blinks = []
-        
+        print(blink_keys)
         for key in blink_keys:
             blink_url = key.replace("blink:", "")
-            blink_data = redis_client.hgetall(key)
+            blink_data = redis.hgetall(key)
             
             blinks.append({
                 'blink_url': blink_url,
@@ -134,7 +154,7 @@ def list_blinks():
 @app.route('/blink/<blink_id>', methods=['PUT'])
 def update_blink(blink_id):
     try:
-        if not redis_client.exists(f"blink:{blink_id}"):
+        if not redis.exists(f"blink:{blink_id}"):
             return jsonify({'error': 'Blink not found'}), 404
         
         data = request.get_json()
@@ -146,9 +166,9 @@ def update_blink(blink_id):
         if not is_valid_url(redirect_url):
             return jsonify({'error': 'Invalid redirect_url format'}), 400
         
-        redis_client.hset(f"blink:{blink_id}", "redirect_url", redirect_url)
+        redis.hset(f"blink:{blink_id}", "redirect_url", redirect_url)
         
-        blink_data = redis_client.hgetall(f"blink:{blink_id}")
+        blink_data = redis.hgetall(f"blink:{blink_id}")
         
         return jsonify({
             'blink_url': blink_id,

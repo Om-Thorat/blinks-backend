@@ -1,4 +1,4 @@
 Flask
-redis
+upstash_redis
 python-dotenv
 flask-cors
